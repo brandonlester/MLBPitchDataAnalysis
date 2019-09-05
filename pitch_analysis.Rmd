@@ -1,0 +1,487 @@
+---
+title: "MLB Pitch Data Analysis"
+author: "Brandon Lester"
+date: "April 28, 2019"
+output: html_document
+---
+
+## Introduction
+
+When should you expect to see a fastball versus an off-speed pitch?
+
+At what velocity is a pitch expected to be thrown at?
+
+These questions are important for batters and pitchers alike. Batters can have an idea of what to expect through their at bat. Pitchers can see where they stack up compared to the rest for a given pitch.
+
+MLB Pitch Data including data for every pitch thrown in the 2015-2018 MLB seasons will be analyzed and visualized to see distribution of pitch speeds and the proportion of pitch type used through an at bat.
+
+Additionally, some fun stats interesting for all baseball fans are included as well!
+
+## Packages Required
+
+```{r message=FALSE, warning=FALSE}
+library(readr) # import data
+library(magrittr) # use pipe operator
+library(tidyr) # tidy messy data
+library(dplyr) # manipulate data
+library(purrr) # apply functions to multiple variabls
+library(broom) # create data frames from other formats
+library(ggplot2) # visualize data
+```
+
+
+## Data Preparation
+
+The [MLB Pitch Data 2015-2018](https://www.kaggle.com/pschale/mlb-pitch-data-20152018#pitches.csv) is posted on Kaggle. It was scraped from this [webpage](http://gd2.mlb.com/components/game/mlb/) which is a part of MLB.com. This collection of data includes the following 4 data sets as csv files:
+
+* **games** – 9,718 observations with 17 variables for every game played in the 2015-2018 seasons
+*	**atbats** – 740,389 observations with 11 variables for every at bat in each of the 4 seasons
+*	**pitches** – 2,867,162 observations with 39 variables for every pitch thrown in each of the 4 seasons
+*	**player_names** – 2,218 observations with 3 variables for every player represented
+
+To start, the data is loaded into *R*.
+
+```{r results = FALSE, message = FALSE}
+atbats <- read_csv("data/atbats.csv")
+games <- read_csv("data/games.csv")
+pitches <- read_csv("data/pitches.csv")
+player_names <- read_csv("data/player_names.csv")
+```
+Here are descriptions for each variable in these data sets. Because there are `r sum(ncol(atbats),ncol(pitches),ncol(games),ncol(player_names))` columns within this data, any variable not used for analysis will not be described. However, all variables were initially considered when cleaning data and may be seen in those steps.
+
+**At Bats**
+
+* **ab_id** - ID number given to each at bat (first 4 digits are the year)
+* **batter_id** - ID number given to each batter (matches **id** in `player_names`)
+* **g_id** - ID number given to each game (first 4 digits are the year)
+* **inning** - inning number
+* **pitcher_id** - ID number given to each pitcher (matches **id** in `player_names`) 
+* **top** - TRUE/FALSE value for whether or not it's the top of the inning
+
+**Games**
+
+* **attendance** - number of fans who attended (1st game of double headers may erroneously be 1 or 0 as MLB pages don't report attendance for those games)
+* **away_final_score** - final score for the visiting team
+* **away_team** - 3 letter abbreviation for away team (3rd letter may indicate league)
+* **date** - date of game
+* **elapsed_time** - length of game (minutes)
+* **g_id** - ID number given to each game (first 4 digits are the year)
+* **home_final_score** - final score for the home team
+* **home_team** - 3 letter abbreviation for home team (3rd letter may indicate league)
+
+**Pitches**
+
+* **ab_id** - ID number given to each at bat (first 4 digits are the year)
+* **b_count** - balls in the current count
+* **outs** - number of outs (before pitch is thrown)
+* **pitch_type** - type of pitch thrown (see data description for full list)
+* **s_count** - strikes in the current count
+* **start_speed** - speed of pitch just as it's thrown
+* **type** - simplified result of the pitch (strike, ball, or in-play)
+
+**Player Names**
+
+* **id** - ID number given to each player (matches with batter_id and pitcher_id)
+* **first_name** - first name of the player
+* **last_name** - last name of the player
+
+
+
+**Data Cleaning**
+
+*At Bats*
+
+The structure of the data should be evaluated and modify as necessary.
+
+ID numbers are numerics but don't actually represent a number value. Additionally, all actual numeric values here should logically only take on integer values. For example, there can't be 2.3 outs in the 4.6th inning with 3.7 runs for the picher's team!
+
+To maintain the original imported data, a new data frame `atbats_clean` will be used as changes are made to data types. The structure was then checked again to ensure the correct changes were made.
+
+
+```{r results = FALSE, message = FALSE}
+str(atbats)
+
+atbats_clean <- atbats
+
+atbats_clean$ab_id <- as.character(atbats_clean$ab_id)
+atbats_clean$batter_id <- as.character(atbats_clean$batter_id)
+atbats_clean$g_id <- as.character(atbats_clean$g_id)
+atbats_clean$pitcher_id <- as.character(atbats_clean$pitcher_id)
+atbats_clean$inning <- as.integer(atbats_clean$inning)
+atbats_clean$o <- as.integer(atbats_clean$o)
+atbats_clean$p_score <- as.integer(atbats_clean$p_score)
+
+str(atbats_clean)
+```
+
+
+After adjusting the structure of the data, summary statistics will give a better idea of the data that will be worked with.
+
+
+```{r}
+summary(atbats)
+```
+
+
+The most important check here is for nonsensible numeric values such as a negative value or outs above 3. Additionally, you can see that the `top` variable is a logical and has more TRUE's than FALSE's which makes sense as many times the bottom of the 9th (or final inning of the game) may not need to be played if the home team is leading.
+
+To further check the character variables, the `unique()` function was used to ensure that the pitcher's throwing hand and the batter stance could only be L for left or R for right as well as make sure all event descriptions made sense.
+
+
+```{r results = FALSE, message = FALSE}
+unique(atbats_clean$event)
+unique(atbats_clean$p_throws)
+unique(atbats_clean$stand)
+```
+
+
+Next, missing values were checked and there are none in the `atbats` data.
+
+
+```{r}
+sum(is.na(atbats))
+```
+
+
+*Games*
+
+`games` was checked an cleaned in a very similar way as `atbats`.
+
+Summary statistics can be see below.
+
+
+```{r results = FALSE, message = FALSE}
+str(games)
+
+games_clean <- games
+
+games_clean$g_id <- as.character(games_clean$g_id)
+games_clean$attendance <- as.integer(games_clean$attendance)
+games_clean$away_final_score <- as.integer(games_clean$away_final_score)
+games_clean$home_final_score <- as.integer(games_clean$home_final_score)
+
+str(games_clean)
+```
+```{r}
+summary(games_clean)
+```
+```{r results = FALSE, message = FALSE}
+unique(games_clean$away_team)
+unique(games_clean$home_team)
+unique(games_clean$venue_name)
+```
+
+
+This data does have a few missing values. They are only in the `umpire_2b` variable. Because this variable isn't used for analysis, all observations will be kept in the data set.
+
+
+```{r}
+sum(is.na(games))
+
+games %>% 
+map_df(~sum(is.na(.))) %>% 
+  gather(variable, num_missing) %>% 
+  filter(num_missing > 0)
+```
+
+
+*Pitches*
+
+From importing the `pitches` data and checking the Global Environment, you can see it's a large data set with many variables. So, handling missing values and then selecting only needed variables was done first.
+
+This displays the total number of missing values as well as breaks down the variables where the missing values are. Variables to select was determined based on what variables had no missing values and what variables were needed regardless of missing values.
+
+
+```{r results = FALSE, message = FALSE}
+sum(is.na(pitches))
+colSums(is.na(pitches))
+```
+
+```{r}
+pitches %>% 
+  select(ab_id, b_count, end_speed, outs, on_1b, on_2b, on_3b, pitch_type, s_count, start_speed, type) %>% 
+  map_df(~sum(is.na(.))) %>% 
+  gather(variable, num_missing) %>% 
+  filter(num_missing > 0)
+```
+
+
+The number of missing values was just under a half a percent of all pitch data, so here the `pitches_clean` is created with ommitting any observations with missing values. A check is then done to make sure all missing values were removed.
+
+
+```{r}
+pitches_clean <- pitches %>% 
+  select(ab_id, b_count, end_speed, outs, on_1b, on_2b, on_3b, pitch_type, s_count, start_speed, type) %>% 
+  na.omit()
+
+sum(is.na(pitches_clean))
+```
+
+
+Here the same structure check and data type changes were performed as they were with the previous 2 data sets.
+
+
+```{r results = FALSE, message = FALSE}
+str(pitches_clean)
+
+pitches_clean$ab_id <- as.character(pitches_clean$ab_id)
+pitches_clean$b_count <- as.integer(pitches_clean$b_count)
+pitches_clean$outs <- as.integer(pitches_clean$outs)
+pitches_clean$s_count <- as.integer(pitches_clean$s_count)
+```
+
+
+Summary statistics are explored and checks of the character variables are performed as well.
+
+
+```{r}
+summary(pitches_clean)
+```
+```{r results = FALSE, message = FALSE}
+unique(pitches_clean$type)
+unique(pitches_clean$pitch_type)
+```
+
+
+From the summary, you can see that there are ball counts of 4. This does not make sense because when a pitch is thrown, there cannot already be 4 balls. Since there are only `r nrow(filter(pitches, b_count == 4))` instances of this, these observations were filtered out.
+
+
+```{r}
+pitches_clean <- filter(pitches_clean, b_count < 4)
+```
+
+
+Pitch type is a big part of this analysis, so this variable needs to be explored further. Here you can see the proportion of each pitch type thrown from all `r nrow(pitches_clean)` pitches.
+
+
+```{r}
+pitch_type_table <- table(pitches_clean$pitch_type)
+pitch_type_table %>% 
+  prop.table() %>% 
+  round(3) %>% 
+  as_data_frame() %>% 
+  rename(pitch = Var1, proportion = n) %>% 
+  arrange(desc(proportion))
+```
+
+
+The Kaggle page linked above can be viewed to see which pitch each abbreviation corresponds to. Here pitch types will be broken down into 4 buckets:
+
+* **Breaking Balls** - off-speed (less speed than fastball) pitch that has downward or sideways motion (sometimes both) as it approaches the batter
+Pitches included: curveball (CU), knuckle curve (KC), screwball (SC), slider (SL)
+* **Changeups** - off-speed (less speed than fastball) pitch that is meant to look like a fastball but approach batter more slowly to confuse the batter's timing
+Pitches included: changeup (CH), knuckleball (KN), eephus (EP)
+* **Fastballs** - standard pitch thrown at top speeds capable by pitcher's
+Pitches included: cutter (FC), four-seam fastball (FF), splitter (FS), two-seam fastball (FT), sinker (SI)
+* **Other** - pitches that don't fit the other categories and/or make up less than 0.1% of pitches
+Pitches included: pitchout (FO/PO), intentional ball (IN), unknown (UN), unidentified (AB & FA) 
+
+
+```{r}
+breakingballs <- c("CU","KC","SC","SL")
+changeups <- c("CH","KN","EP")
+fastballs <- c("FC","FF","FS","FT","SI")
+other_pitches <- c("FO","PO","IN","UN","AB","FA")
+
+pitches_clean$pitch_type_b <- pitches_clean$pitch_type
+pitches_clean$pitch_type_b[pitches_clean$pitch_type %in% fastballs] <- "FB"
+pitches_clean$pitch_type_b[pitches_clean$pitch_type %in% breakingballs] <- "BB"
+pitches_clean$pitch_type_b[pitches_clean$pitch_type %in% changeups] <- "CU"
+pitches_clean$pitch_type_b[pitches_clean$pitch_type %in% other_pitches] <- "OT"
+```
+
+Here's a view of the proportions for each of these new pitch types
+
+```{r}
+pitch_type_b_table <- table(pitches_clean$pitch_type_b)
+pitch_type_b_table %>% 
+  prop.table() %>% 
+  round(3) %>% 
+  as_data_frame() %>% 
+  rename(pitch = Var1, proportion = n) %>% 
+  arrange(desc(proportion)) %>% 
+  ggplot(aes(x = pitch, y = proportion, fill = pitch)) + 
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = proportion), vjust = -0.25) +
+  ggtitle("Pitch Type Proportions")
+```
+
+**Player Names**
+
+This data set is simply an ID, first name, and last name. The `id` variable was changed to `player_id` for more clarity later when joining data. Also, it was changed to a character value as all other ID's have been.
+
+```{r results = FALSE, message = FALSE}
+str(player_names)
+sum(is.na(player_names))
+player_names_clean <- player_names
+names(player_names_clean)[1] <- "player_id"
+player_names_clean$player_id <- as.character(player_names_clean$player_id)
+str(player_names_clean)
+```
+
+
+## Exploratory Data Analysis
+
+
+First, the relationship between pitch velocity and pitch type will be explored.
+
+A data frame `speed_means` is created to get mean velocity for each pitch type as well as its standard deviation. Then, the distribution and frequencies for each pitch type can be viewed.
+
+```{r warning = FALSE}
+speed_means <- pitches_clean %>% 
+                subset(pitch_type_b %in% c("FB","BB","CU")) %>% 
+                group_by(pitch_type_b) %>% 
+                summarise(Mean = mean(start_speed),
+                          SD = sd(start_speed))
+
+ggplot(subset(pitches_clean, pitch_type_b %in% c("FB","BB","CU")), aes(x = start_speed, fill = pitch_type_b)) +
+  geom_histogram(binwidth = 1, color = "grey30") +
+  geom_vline(data = speed_means, aes(xintercept = Mean), linetype = "dashed") +
+  facet_grid(~ pitch_type_b) +
+  xlim(60,105) +
+  ylab("Frequency") +
+  xlab("Pitch Speed (mph)") +
+  ggtitle("Pitch Velocity by Pitch Type") +
+  scale_fill_discrete(name = "Pitch Type", labels = c("Breaking Balls", "Changeups", "Fastballs")) +
+  theme(panel.grid.minor = element_blank(),
+        axis.ticks = element_blank())
+```
+
+You can see that fastballs are thrown much more often than breaking balls or changeups. Additionally, fastballs have a tighter distribution. This makes sense as fastballs are more of a standard pitch to be thrown as fast as possible, whereas breaking balls and changeups are used to throw off the batter by having more motion on the ball or confusing their timing.
+
+Now, when can we expected to see each of these pitches throughout an at bat?
+
+A table can be created to see how many pitches are thrown at each combination of balls and strikes throughout the at bat.
+
+```{r}
+count_table <- table(pitches_clean$b_count, pitches_clean$s_count)
+(count_prop <- prop.table(count_table))
+```
+
+There are 12 possible ball-strike counts from an 0-0 count to a 3-2 count. A new variable `bs-count` is created to have what the count is before each pitch.
+
+```{r}
+pitches_clean$bs_count <- paste(pitches_clean$b_count, pitches_clean$s_count, sep = "-")
+head(pitches_clean[,c("ab_id","bs_count")],7)
+```
+
+
+Here you can see the result of creating this variable and how it flows from one pitch to the next through an at bat. This flows correctly as the first 2 pitches were strikes, followed by a foul ball which kept that count at 0-2, then two balls were thrown before the final pitch of the at bat when there was a 2-2 count.
+
+This next section of code creates a table showing the pitch types for each ball-strike count.
+
+```{r}
+type_count_table <- table(pitches_clean$pitch_type_b, pitches_clean$bs_count)
+(type_count_prop <- prop.table(type_count_table))
+```
+
+The table shows proportions as it relates to all `r nrow(pitches_clean)` pitches. We want it to be the proportion within each ball-strike count.
+
+Here a data frame is created from the table and each value is divided by the column sum to get the within count proportion. The data frame is then taken from wide to long data to be used for visualizing in the next step.
+
+```{r}
+typeVcount <- type_count_table %>% 
+  tidy() %>% 
+  select(pitch_type_b = Var1, bs_count = Var2, count = n) %>% 
+  spread(bs_count, count)
+
+typeVcount_colSums <- colSums(typeVcount[,-1])
+
+for (i in 1:(ncol(typeVcount) - 1)) {
+  typeVcount[,i + 1] <- typeVcount[,i + 1]/typeVcount_colSums[i]
+}
+
+typeVcount_long <- typeVcount %>% 
+  gather(bs_count, prop, -pitch_type_b)
+```
+
+
+Now that we have the data cleaned up and formatted correctly, we will visualize pitch type use throughout the count.
+
+
+```{r warning = FALSE}
+ggplot(subset(typeVcount_long, pitch_type_b %in% c("BB","CU","FB")), 
+       aes(x = bs_count, y = prop, fill = pitch_type_b)) + 
+  geom_bar(stat = "identity", position = position_dodge()) +
+  ylab("Proportion") +
+  xlab("Ball-Strike Count") +
+  scale_x_discrete(limits = c("0-0","0-1","1-0","0-2","1-1","2-0","1-2","2-1","3-0","2-2","3-1")) +
+  scale_fill_discrete(name = "Pitch Type", labels = c("Breaking Balls", "Changeups", "Fastballs")) +
+  ggtitle("Pitch Type Used through an At Bat")
+```
+
+
+As you step through each count, whether it's a 1 pitch count (ie 0-1 or 1-0) or a 4 pitch count (ie 2-2 or 3-1), fastballs are used more often when the pitcher is at a disadvantage (generally meaning when there are more balls then strikes in the count). For example, looking at 1-2 through 3-0 counts, there is a significant drop off of breaking balls and changeups being used.
+
+
+After finding these significant insights analyzing pitch types, here are some fun stats found within the data!
+
+**Fastest Pitch**
+
+
+Keeping with pitch analysis, here are the 3 instances of the top recorded pitch speed of 105mph.
+
+
+```{r}
+pitches_clean %>% 
+  filter(start_speed == max(start_speed)) %>% 
+  inner_join(atbats_clean, by = "ab_id") %>% 
+  select(start_speed, pitch_type, batter_id, pitcher_id) %>% 
+  inner_join(player_names_clean, by = c("pitcher_id" = "player_id")) %>% 
+  inner_join(player_names_clean, by = c("batter_id" = "player_id"), suffix = c("_pitcher", "_batter")) %>% 
+  select(MPH = start_speed, PitchType = pitch_type, PitcherFirst = first_name_pitcher, PitcherLast =  last_name_pitcher, BatterFirst = first_name_batter, BatterLast = last_name_batter)
+```
+
+
+You can see that all of these happened in the 9th inning when closers came out to finish the game. Closers don't throw as many pitches as starters and other relief pitchers. The pitches they do throw are expected to be elite pitches and thrown at very high speeds as you can see here. Amazingly, two of these pitches were thrown by the same pitcher in the same at bat!
+
+Here's an article about this at bat [Hicks hits 105 mph-- twice -- on radar gun](https://www.mlb.com/cardinals/news/jordan-hicks-hits-105-mph-on-radar-gun-c277593760).
+
+Slowest pitch of the at bat was 103.7mph...
+
+
+**Game with the Highest Attendance**
+```{r}
+games_clean %>% 
+  filter(attendance == max(attendance)) %>% 
+  select(Date = date, Attendance = attendance, Away = away_team, Home = home_team)
+
+```
+
+**Longest Game (most innings and elapsed time)**
+```{r}
+atbats_clean %>% 
+  filter(inning == max(inning)) %>% 
+  select(g_id) %>% 
+  unique() %>% 
+  inner_join(games_clean, by = "g_id") %>% 
+  select(Date = date, elapsed_time, Away = away_team, Home = home_team, AwayScore = away_final_score, HomeScore = home_final_score) %>% 
+  arrange(desc(elapsed_time))
+```
+
+**Most Runs Scored in a Game**
+```{r}
+atbats_clean %>% 
+  filter(p_score == max(p_score)) %>% 
+  select(g_id) %>% 
+  unique() %>% 
+  inner_join(games_clean, by = "g_id") %>% 
+  select(Date = date, Away = away_team, Home = home_team, AwayScore = away_final_score, HomeScore = home_final_score)
+```
+
+## Summary
+
+When should you expect to see a fastball versus an off-speed pitch? At what velocity is a pitch expected to be thrown at?
+
+We now know the answers to these questions.
+
+The major insights found include the following:
+
+* Fastballs are thrown a majority of the time
+* The average fastball speed for pitchers to compare to is 92mph.
+* Breaking balls have more speed variability then other pitch types.
+* When a pitcher gets behind in a count, they rely on fastballs.
+* Jordan Hicks can throw some heat!
+
+This information can be useful for all baseball players whether preparing for an at bat or analyzing pitcher ability.
+
